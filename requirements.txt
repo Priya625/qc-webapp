@@ -1,5 +1,4 @@
-Flask
+streamlit
 pandas
 openpyxl
-gunicorn
 XlsxWriter
