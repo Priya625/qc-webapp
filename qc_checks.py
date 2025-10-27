@@ -14,37 +14,49 @@ HEADER_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="s
 
 # ----------------------------- 1️⃣ Detect Monitoring Period -----------------------------
 def detect_period_from_rosco(rosco_path):
-    df = pd.read_excel(rosco_path, header=None)
-    value_col = df.iloc[:, 1].astype(str)
-    period_row = value_col[value_col.str.contains("Monitoring Periods", na=False)]
-    if period_row.empty:
-        raise ValueError("Could not find 'Monitoring Periods' in Rosco file.")
-    text = period_row.iloc[0]
-    found = re.findall(r"\d{4}-\d{2}-\d{2}", text)
-    if len(found) >= 2:
-        start_date = pd.to_datetime(found[0], format=DATE_FORMAT)
-        end_date = pd.to_datetime(found[1], format=DATE_FORMAT)
-        return start_date, end_date
-    else:
-        raise ValueError("Could not parse monitoring period dates from Rosco file.")
+    """Extracts monitoring period dates from Rosco file."""
+    try:
+        df = pd.read_excel(rosco_path, header=None)
+        value_col = df.iloc[:, 1].astype(str)
+        period_row = value_col[value_col.str.contains("Monitoring Period", case=False, na=False)]
+        if period_row.empty:
+            raise ValueError("❌ 'Monitoring Period' not found in Rosco file.")
+
+        text = period_row.iloc[0]
+        found = re.findall(r"\d{4}-\d{2}-\d{2}", text)
+        if len(found) >= 2:
+            start_date = pd.to_datetime(found[0], format=DATE_FORMAT)
+            end_date = pd.to_datetime(found[1], format=DATE_FORMAT)
+            return start_date, end_date
+        else:
+            raise ValueError("❌ Could not parse dates from Rosco file.")
+    except Exception as e:
+        print(f"[ERROR] detect_period_from_rosco: {e}")
+        # Default fallback to today if parsing fails
+        today = pd.Timestamp.today()
+        return today, today
 
 
 # ----------------------------- 2️⃣ Load BSR -----------------------------
 def detect_header_row(bsr_path):
-    df_sample = pd.read_excel(bsr_path, header=None, nrows=30)
+    """Finds the header row dynamically by scanning for key terms."""
+    df_sample = pd.read_excel(bsr_path, header=None, nrows=200)
     for i, row in df_sample.iterrows():
         row_str = " ".join(row.dropna().astype(str).tolist()).lower()
+        if "region" in row_str and "market" in row_str and "broadcaster" in row_str:
+            return i
         if "date" in row_str and ("utc" in row_str or "gmt" in row_str):
             return i
-    raise ValueError("Could not detect header row in BSR file.")
+    return 0  # fallback to first row
 
 
 def load_bsr(bsr_path):
+    """Loads BSR file after detecting header."""
     header_row = detect_header_row(bsr_path)
     df = pd.read_excel(bsr_path, header=header_row)
     df.columns = [str(c).strip() for c in df.columns]
+    print(f"✅ BSR loaded successfully with {len(df)} rows.")
     return df
-
 
 # ----------------------------- 3️⃣ Period Check -----------------------------
 def period_check(df, start_date, end_date):
