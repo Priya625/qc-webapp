@@ -709,7 +709,134 @@ def duplicated_markets_check(df):
     print(f"Duplicated Markets checked: {total_checked}, Failed: {failed}")
 
     return df
+# -----------------------------------------------------------
+# 13️⃣ Country & Channel IDs Check
+def country_channel_id_check(df):
+    """
+    Ensures that each channel and market is mapped to a single, consistent ID.
+    Outputs two columns:
+      - Market_Channel_ID_OK (True/False)
+      - Market_Channel_ID_Remark (string)
+    """
 
+    df_result = df.copy()
+    df_result["Market_Channel_ID_OK"] = True
+    df_result["Market_Channel_ID_Remark"] = ""
+
+    def norm(x):
+        return str(x).strip() if pd.notna(x) else ""
+
+    # Maps to track consistency
+    channel_id_map = {}
+    market_id_map = {}
+
+    for idx, row in df_result.iterrows():
+        channel = norm(row.get("TV-Channel"))
+        channel_id = norm(row.get("Channel ID"))
+        market = norm(row.get("Market"))
+        market_id = norm(row.get("Market ID"))
+
+        remarks = []
+        ok = True
+
+        # ✅ Check 1 – Same channel shouldn't have multiple Channel IDs
+        if channel:
+            if channel in channel_id_map and channel_id_map[channel] != channel_id:
+                remarks.append(
+                    f"Channel '{channel}' has multiple IDs ({channel_id_map[channel]} vs {channel_id})"
+                )
+                ok = False
+            else:
+                channel_id_map[channel] = channel_id
+
+        # ✅ Check 2 – Same market shouldn't have multiple Market IDs
+        if market:
+            if market in market_id_map and market_id_map[market] != market_id:
+                remarks.append(
+                    f"Market '{market}' has multiple IDs ({market_id_map[market]} vs {market_id})"
+                )
+                ok = False
+            else:
+                market_id_map[market] = market_id
+
+        # ✅ Check 3 – Same Channel ID shouldn't be used for multiple channels
+        if channel_id and list(channel_id_map.values()).count(channel_id) > 1:
+            remarks.append(f"Channel ID '{channel_id}' assigned to multiple channels")
+            ok = False
+
+        # ✅ Check 4 – Same Market ID shouldn't be used for multiple markets
+        if market_id and list(market_id_map.values()).count(market_id) > 1:
+            remarks.append(f"Market ID '{market_id}' assigned to multiple markets")
+            ok = False
+
+        # ✅ Write results
+        df_result.at[idx, "Market_Channel_ID_OK"] = ok
+        df_result.at[idx, "Market_Channel_ID_Remark"] = "; ".join(remarks) if remarks else "OK"
+
+    return df_result
+
+# -----------------------------------------------------------
+# 14️⃣ Client Data / LSTV / OTT Check (corrected)
+def client_lstv_ott_check(df_worksheet, project_config=None):
+    """
+    Checks:
+      - Market and Channel ID consistency
+      - Inclusion of Client Data, LSTV, OTT sources
+    Returns:
+      df with:
+        - Client_LSTV_OTT_OK (True/False)
+        - Client_LSTV_OTT_Remark
+    """
+
+    df = df_worksheet.copy()
+    df["Client_LSTV_OTT_OK"] = True
+    df["Client_LSTV_OTT_Remark"] = ""
+
+    # --- 1️⃣ Market / Channel ID consistency ---
+    if "Market ID" in df.columns and "Channel ID" in df.columns:
+        # Identify Channel IDs belonging to multiple Market IDs
+        multi_market = df.groupby("Channel ID")["Market ID"].nunique()
+        multi_market_channels = multi_market[multi_market > 1].index.tolist()
+
+        # Identify Market IDs belonging to multiple Channel IDs
+        multi_channel = df.groupby("Market ID")["Channel ID"].nunique()
+        multi_channel_ids = multi_channel[multi_channel > 1].index.tolist()
+    else:
+        multi_market_channels = []
+        multi_channel_ids = []
+
+    # --- 2️⃣ Client / LSTV / OTT inclusion ---
+    pay_free_col = "Pay/Free TV" if "Pay/Free TV" in df.columns else None
+
+    # Define expected sources
+    expected_sources = ["lstv", "client", "ott"]
+
+    for idx, row in df.iterrows():
+        remarks = []
+        ok = True
+
+        # Market / Channel mapping issues
+        if row.get("Channel ID") in multi_market_channels:
+            ok = False
+            remarks.append("Channel assigned to multiple Market IDs")
+
+        if row.get("Market ID") in multi_channel_ids:
+            ok = False
+            remarks.append("Market ID assigned to multiple Channel IDs")
+
+        # Client / LSTV / OTT source checks
+        if pay_free_col:
+            val = str(row.get(pay_free_col, "")).strip().lower()
+            # Only mark False if none of the expected sources are present
+            if not any(source in val for source in expected_sources):
+                ok = False
+                remarks.append(f"Missing required source (Client/LSTV/OTT): {row.get(pay_free_col, '')}")
+
+        # Write results
+        df.at[idx, "Client_LSTV_OTT_OK"] = ok
+        df.at[idx, "Client_LSTV_OTT_Remark"] = "; ".join(remarks) if remarks else "OK"
+
+    return df
 # -----------------------------------------------------------
 # ✅ Excel Coloring for True/False checks
 def color_excel(output_path, df):
