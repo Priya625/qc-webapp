@@ -143,13 +143,14 @@ def period_check(df, start_date, end_date):
 # ----------------------------- 4️⃣ Completeness Check -----------------------------
 def completeness_check(df):
     """
-    Completeness check (robust).
-    - Mandatory: TV Channel, Channel ID, Match Day, Source (must be non-empty)
-    - Audience: either Aud. Estimates OR Aud Metered must be present (0 counts as present)
-    - If Type of Program is live/repeat/delayed -> Home Team and Away Team must be present
-    - Adds two columns: Completeness_OK (bool) and Completeness_Remark (string)
+    ✅ Completeness Check (Optimized with Correct Audience Logic)
+    -------------------------------------------------
+    Checks data completeness in BSR file:
+    - Mandatory: TV Channel, Channel ID, Match Day, Source
+    - Audience: exactly one of Aud. Estimates / Aud. Metered must be filled (0 counts as filled)
+    - Type of Program: if Live/Repeat/Delayed → Home & Away Teams required
     """
-    # --- Candidate header names (case-insensitive match)
+
     required_columns = {
         "tv_channel": ["TV Channel", "TV-Channel", "Channel", "TV Channel "],
         "channel_id": ["Channel ID", "ChannelID", "Channel Id"],
@@ -159,414 +160,400 @@ def completeness_check(df):
         "away_team": ["Away Team", "AwayTeam", "Away"],
         "aud_estimates": ["Aud. Estimates ['000s]", "Audience Estimates", "Aud Estimates"],
         "aud_metered": ["Aud Metered (000s) 3+", "Audience Metered", "Aud. Metered (000s) 3+"],
-        # ✅ Expanded Source detection to include Audience Source variations
         "source": ["Source", "AudienceSource", "Audience Source", "Audience_Source"]
     }
 
-    # Build a mapping from logical keys to actual dataframe column names (case-insensitive)
+    # --- Map logical names to actual columns (case-insensitive)
     lower_to_actual = {col.lower(): col for col in df.columns}
     colmap = {}
     for key, opts in required_columns.items():
-        found = None
-        for opt in opts:
-            for col_lower, actual_col in lower_to_actual.items():
-                if opt.lower() == col_lower:
-                    found = actual_col
-                    break
-            if found:
-                break
-        colmap[key] = found  # may be None if not found
+        found = next((lower_to_actual.get(opt.lower()) for opt in opts if opt.lower() in lower_to_actual), None)
+        colmap[key] = found
 
-    # ✅ Special case: if "Audience Source" exists but "Source" doesn't, use it as Source
+    # --- Fallback for "Audience Source"
     if not colmap.get("source"):
         for col in df.columns:
             if "audience source" in col.lower():
                 colmap["source"] = col
                 break
 
-    # Helper to decide if a cell is "present"
+    # --- Helper to detect presence (0 and 0.00 count as filled)
     def is_present(val):
         if val is None:
             return False
-        try:
-            if pd.isna(val):
-                return False
-        except Exception:
-            pass
-        if isinstance(val, (int, float)) and not (isinstance(val, float) and pd.isna(val)):
-            return True
-        s = str(val).replace("\xa0", "").strip()
-        if s == "" or s.lower() in ["nan", "none"]:
-            return False
-        return True
+        if isinstance(val, (int, float)):
+            # NaN is empty, 0 and 0.0 are valid
+            return not pd.isna(val)
+        s = str(val).replace("\xa0", "").strip().lower()
+        return not (s == "" or s in ["nan", "none"])
 
-    # Prepare result columns
+    # --- Initialize result columns
     df["Completeness_OK"] = True
-    df["Completeness_Remark"] = ""
+    df["Completeness_Remark"] = "All key fields present"
 
     live_types = {"live", "repeat", "delayed"}
     relaxed_types = {"highlights", "magazine", "support", "magazine and support"}
 
-    # Iterate rows
+    # --- Iterate rows
     for idx, row in df.iterrows():
         missing = []
 
-        # 1) Mandatory columns: TV Channel, Channel ID, Match Day, Source
-        for logical, display in [
-            ("tv_channel", "TV Channel"),
-            ("channel_id", "Channel ID"),
-            ("match_day", "Match Day"),
-            ("source", "Source")
-        ]:
+        # 1️⃣ Mandatory Fields
+        for logical, display in [("tv_channel", "TV Channel"), ("channel_id", "Channel ID"),
+                                 ("match_day", "Match Day"), ("source", "Source")]:
             colname = colmap.get(logical)
             if colname is None:
                 missing.append(f"{display} (column not found)")
-            else:
-                if not is_present(row.get(colname)):
-                    missing.append(display)
+            elif not is_present(row.get(colname)):
+                missing.append(display)
 
-        # 2) Audience: either aud_estimates OR aud_metered must be present
+        # 2️⃣ Audience Logic (EXACTLY ONE should be filled)
         aud_est_col = colmap.get("aud_estimates")
         aud_met_col = colmap.get("aud_metered")
-        aud_est_present = False
-        aud_met_present = False
-        if aud_est_col is not None:
-            aud_est_present = is_present(row.get(aud_est_col))
-        if aud_met_col is not None:
-            aud_met_present = is_present(row.get(aud_met_col))
 
-        if (aud_est_col is None) and (aud_met_col is None):
+        if not aud_est_col and not aud_met_col:
             missing.append("Audience (Estimates/Metered) (columns not found)")
         else:
-            if not (aud_est_present or aud_met_present):
-                missing.append("Audience (Estimates/Metered)")
+            est_val = row.get(aud_est_col) if aud_est_col else None
+            met_val = row.get(aud_met_col) if aud_met_col else None
 
-        # 3) Home/Away requirement depending on Type of Program
+            est_present = is_present(est_val)
+            met_present = is_present(met_val)
+
+            # --- Exclusive check ---
+            if not est_present and not met_present:
+                missing.append("Both Audience fields are empty")
+            elif est_present and met_present:
+                missing.append("Both Audience fields are filled")
+
+        # 3️⃣ Type-based (Home/Away)
         type_col = colmap.get("type_of_program")
         prog_type = str(row.get(type_col) or "").strip().lower() if type_col else ""
-
-        home_col = colmap.get("home_team")
-        away_col = colmap.get("away_team")
+        home_col, away_col = colmap.get("home_team"), colmap.get("away_team")
 
         if prog_type in live_types:
-            if home_col is None:
+            if not home_col:
                 missing.append("Home Team (column not found)")
             elif not is_present(row.get(home_col)):
                 missing.append("Home Team")
 
-            if away_col is None:
+            if not away_col:
                 missing.append("Away Team (column not found)")
             elif not is_present(row.get(away_col)):
                 missing.append("Away Team")
 
-        elif prog_type in relaxed_types:
-            pass
-        else:
-            if home_col is not None and not is_present(row.get(home_col)):
+        elif prog_type not in relaxed_types:
+            if home_col and not is_present(row.get(home_col)):
                 missing.append("Home Team")
-            if away_col is not None and not is_present(row.get(away_col)):
+            if away_col and not is_present(row.get(away_col)):
                 missing.append("Away Team")
 
-        # Finalize per-row result
+        # 4️⃣ Final result
         if missing:
             df.at[idx, "Completeness_OK"] = False
             df.at[idx, "Completeness_Remark"] = "; ".join(missing)
-        else:
-            df.at[idx, "Completeness_OK"] = True
-            df.at[idx, "Completeness_Remark"] = "All key fields present"
 
     return df
 
 # ----------------------------- 5️⃣ Overlap / Duplicate / Day Break -----------------------------
 def overlap_duplicate_daybreak_check(df):
     """
-    Non-destructive Overlap / Duplicate / Daybreak QC.
-    Returns a new DataFrame with original columns intact + these added columns:
-      - Overlap_OK (bool), Overlap_Remark (str)
-      - Duplicate_OK (bool), Duplicate_Remark (str)
-      - Daybreak_OK (bool), Daybreak_Remark (str)
+    ✅ Performs three QC checks (non-destructive):
+      1. Overlap check – consecutive programs overlap in time.
+      2. Duplicate check – exact duplicate rows for same Channel/Date/Time.
+      3. Daybreak check – program continuation breaks incorrectly across days.
+
+    Returns:
+      Original DataFrame + new QC columns:
+        Overlap_OK, Overlap_Remark,
+        Duplicate_OK, Duplicate_Remark,
+        Daybreak_OK, Daybreak_Remark
     """
-    if df is None:
+
+    if df is None or df.empty:
         return df
 
-    # work on deep copy for safety
     df_in = df.copy(deep=True)
 
-    # ---------- auto-detect column names (case-insensitive) ----------
+    # -------- Helper to find columns (case-insensitive) --------
     def find_col(sub):
-        return next((c for c in df_in.columns if sub.lower() in str(c).lower()), None)
+        for c in df_in.columns:
+            if sub.lower() in str(c).lower():
+                return c
+        return None
 
-    col_channel       = find_col("channel") or "TV Channel"
-    col_channel_id    = find_col("channel id") or "Channel ID"
-    col_date_utc      = find_col("date (utc") or find_col("date") or "Date (UTC/GMT)"
-    col_start_utc     = find_col("start (utc") or find_col("start") or "Start (UTC)"
-    col_end_utc       = find_col("end (utc") or find_col("end") or "End (UTC)"
-    col_payfree       = find_col("pay") or "Pay/Free"
-    col_combined      = find_col("combined") or "Combined"
+    col_channel = find_col("channel") or "TV Channel"
+    col_channel_id = find_col("channel id") or "Channel ID"
+    col_date = find_col("date") or "Date (UTC/GMT)"
+    col_start = find_col("start") or "Start (UTC)"
+    col_end = find_col("end") or "End (UTC)"
+    col_pay = find_col("pay") or "Pay/Free TV"
+    col_combined = find_col("combined")
 
-    # ---------- create a working sorted view (keep original index) ----------
-    # parse times into temporary columns (do NOT overwrite original cols)
-    tmp_start = pd.to_datetime(df_in[col_start_utc].astype(str).str.strip(), format="%H:%M:%S", errors="coerce") \
-                if col_start_utc in df_in.columns else pd.NaT
-    tmp_end   = pd.to_datetime(df_in[col_end_utc].astype(str).str.strip(),   format="%H:%M:%S", errors="coerce") \
-                if col_end_utc in df_in.columns else pd.NaT
+    # -------- Parse time safely --------
+    df_in["_qc_start_dt"] = pd.to_datetime(df_in[col_start], format="%H:%M:%S", errors="coerce") if col_start in df_in else pd.NaT
+    df_in["_qc_end_dt"] = pd.to_datetime(df_in[col_end], format="%H:%M:%S", errors="coerce") if col_end in df_in else pd.NaT
+    df_in["_orig_index"] = df_in.index
 
-    work = df_in.assign(_qc_start_dt=tmp_start, _qc_end_dt=tmp_end, _orig_index=df_in.index)
+    # -------- Sort for sequential checks --------
+    sort_cols = [c for c in [col_channel, col_date, "_qc_start_dt"] if c in df_in.columns]
+    df_work = df_in.sort_values(by=sort_cols, na_position="last").reset_index(drop=True)
 
-    sort_by = [c for c in (col_channel, col_date_utc, "_qc_start_dt") if c in work.columns]
-    if sort_by:
-        work = work.sort_values(by=sort_by, na_position="last").reset_index(drop=True)
-    else:
-        work = work.reset_index(drop=True)
-
-    # ---------- OVERLAP CHECK ----------
-    overlap_ok = pd.Series(True, index=work.index)
-    overlap_remark = pd.Series("", index=work.index)
+    # =====================================================
+    # 1️⃣ OVERLAP CHECK
+    # =====================================================
+    overlap_ok = pd.Series(True, index=df_work.index)
+    overlap_remark = pd.Series("", index=df_work.index)
 
     try:
-        # create OTT flag (do not assign back to original df)
-        is_ott = pd.Series(False, index=work.index)
-        if col_payfree in work.columns:
-            is_ott = work[col_payfree].fillna("").astype(str).str.lower().str.contains("ott|internet|www")
+        prev_end = df_work["_qc_end_dt"].shift(1)
+        same_channel = df_work[col_channel].eq(df_work[col_channel].shift(1))
+        same_date = df_work[col_date].eq(df_work[col_date].shift(1))
+        is_ott = df_work[col_pay].astype(str).str.lower().str.contains("ott|internet|www", na=False) if col_pay in df_work else False
 
-        prev_end = work["_qc_end_dt"].shift(1)
-        same_channel = work[col_channel] == work[col_channel].shift(1) if col_channel in work.columns else pd.Series(False, index=work.index)
-        same_date = work[col_date_utc] == work[col_date_utc].shift(1) if col_date_utc in work.columns else pd.Series(False, index=work.index)
-
-        # overlap when same channel+date, not OTT, and start < previous end (both datetimes present)
-        overlap_mask = same_channel & same_date & (~is_ott) & work["_qc_start_dt"].notna() & prev_end.notna() & (work["_qc_start_dt"] < prev_end)
-
+        overlap_mask = same_channel & same_date & (~is_ott) & df_work["_qc_start_dt"].notna() & prev_end.notna() & (df_work["_qc_start_dt"] < prev_end)
         overlap_ok.loc[overlap_mask] = False
-        overlap_remark.loc[overlap_mask] = "Overlap detected between consecutive events"
+        overlap_remark.loc[overlap_mask] = "Overlap detected between consecutive programs"
     except Exception as e:
-        # fail-safe: mark all True and leave remark empty
         print(f"⚠️ Overlap logic failed: {e}")
 
-    # ---------- DUPLICATE CHECK ----------
-    duplicate_ok = pd.Series(True, index=work.index)
-    duplicate_remark = pd.Series("", index=work.index)
+    # =====================================================
+    # 2️⃣ DUPLICATE CHECK
+    # =====================================================
+    duplicate_ok = pd.Series(True, index=df_work.index)
+    duplicate_remark = pd.Series("", index=df_work.index)
 
     try:
-        # duplicate columns chosen from original names available (must include channel + date + start + end)
-        dup_cols = [c for c in (col_channel, col_date_utc, col_start_utc, col_end_utc) if c in df_in.columns]
+        dup_cols = [c for c in [col_channel, col_date, col_start, col_end] if c in df_in.columns]
         if dup_cols:
-            # Use df_in (original index alignment) for duplicated to avoid affecting work-sort ordering:
-            dup_mask_full = df_in.duplicated(subset=dup_cols, keep=False)
-            # map dup_mask_full (original index) to work's rows via orig_index
-            dup_mask_work = work["_orig_index"].map(lambda i: dup_mask_full.iloc[i] if i in dup_mask_full.index else False)
+            dup_mask = df_in.duplicated(subset=dup_cols, keep=False)
+            dup_mask_work = df_work["_orig_index"].isin(df_in[dup_mask].index)
             duplicate_ok.loc[dup_mask_work] = False
             duplicate_remark.loc[dup_mask_work] = "Duplicate row found"
     except Exception as e:
         print(f"⚠️ Duplicate logic failed: {e}")
 
-    # ---------- DAYBREAK CHECK ----------
-    daybreak_ok = pd.Series(True, index=work.index)
-    daybreak_remark = pd.Series("", index=work.index)
+    # =====================================================
+    # 3️⃣ DAYBREAK CHECK
+    # =====================================================
+    daybreak_ok = pd.Series(True, index=df_work.index)
+    daybreak_remark = pd.Series("", index=df_work.index)
 
     try:
-        # iterate adjacent rows in work (sorted) — safe and small overhead
-        for i in range(1, len(work)):
-            curr = work.iloc[i]
-            prev = work.iloc[i - 1]
-
-            same_channel_val = (col_channel in work.columns and curr.get(col_channel) == prev.get(col_channel))
-            same_channel_id  = (col_channel_id in work.columns and curr.get(col_channel_id) == prev.get(col_channel_id))
-            same_combined    = (col_combined in work.columns and curr.get(col_combined) == prev.get(col_combined))
+        for i in range(1, len(df_work)):
+            curr, prev = df_work.iloc[i], df_work.iloc[i - 1]
+            same_channel_val = (col_channel in df_work and curr[col_channel] == prev[col_channel])
+            same_channel_id = (col_channel_id in df_work and curr[col_channel_id] == prev[col_channel_id])
+            same_combined = (col_combined in df_work and curr.get(col_combined) == prev.get(col_combined))
 
             if same_channel_val and same_channel_id and same_combined:
-                # continuation candidate: ensure both end & start dt are present
                 if pd.notna(prev["_qc_end_dt"]) and pd.notna(curr["_qc_start_dt"]):
-                    gap_min = (curr["_qc_start_dt"] - prev["_qc_end_dt"]).total_seconds() / 60.0
-                    # allow small gaps representing minor program split (0–2 min)
-                    if gap_min < 0 or gap_min > 2:
+                    gap = (curr["_qc_start_dt"] - prev["_qc_end_dt"]).total_seconds() / 60
+                    if gap < 0 or gap > 2:
                         daybreak_ok.iat[i] = False
-                        daybreak_remark.iat[i] = "Time gap too large for continuation"
+                        daybreak_remark.iat[i] = "Invalid continuation gap"
             else:
-                # if start day differs from previous end day -> suspicious daybreak
-                if pd.notna(prev["_qc_end_dt"]) and pd.notna(curr["_qc_start_dt"]):
-                    if curr["_qc_start_dt"].day != prev["_qc_end_dt"].day:
-                        daybreak_ok.iat[i] = False
-                        daybreak_remark.iat[i] = "Different program continuation across days"
+                if pd.notna(prev["_qc_end_dt"]) and pd.notna(curr["_qc_start_dt"]) and curr["_qc_start_dt"].day != prev["_qc_end_dt"].day:
+                    daybreak_ok.iat[i] = False
+                    daybreak_remark.iat[i] = "Continuation across daybreak"
     except Exception as e:
         print(f"⚠️ Daybreak logic failed: {e}")
 
-    # ---------- Map results back to original DataFrame order ----------
-    # indexes in 'work' correspond to rows; map them to original index via _orig_index
-    res_df = pd.DataFrame({
+    # =====================================================
+    # Map Results Back
+    # =====================================================
+    res = pd.DataFrame({
         "Overlap_OK": overlap_ok,
         "Overlap_Remark": overlap_remark,
         "Duplicate_OK": duplicate_ok,
         "Duplicate_Remark": duplicate_remark,
         "Daybreak_OK": daybreak_ok,
-        "Daybreak_Remark": daybreak_remark,
-    }, index=work.index)
+        "Daybreak_Remark": daybreak_remark
+    })
 
-    # create output as original dataframe copy and append results aligned by original index
-    out = df_in.copy(deep=True)
-    # ensure alignment by original index
-    res_df_with_orig_idx = res_df.copy()
-    res_df_with_orig_idx["_orig_index"] = work["_orig_index"].values
-    # set index to orig index and then reindex to out
-    res_df_with_orig_idx = res_df_with_orig_idx.set_index("_orig_index").reindex(out.index)
+    res["_orig_index"] = df_work["_orig_index"].values
+    res.set_index("_orig_index", inplace=True)
+    df_out = df_in.join(res, how="left")
 
-    # assign columns (if already exist, they'll be overwritten with result values)
-    for col in ["Overlap_OK", "Overlap_Remark", "Duplicate_OK", "Duplicate_Remark", "Daybreak_OK", "Daybreak_Remark"]:
-        out[col] = res_df_with_orig_idx[col].values
-
-    return out
+    return df_out
 
 
 # ----------------------------- 6️⃣ Program Category Check -----------------------------
-def program_category_check(filepath, df_bsr):
+def program_category_check(bsr_path, df):
     """
-    Program Category Check:
-    Compares BSR data with Fixture List to validate program type (Live/Repeat/Highlights).
+    ✅ Program Category Check (Optimized for Flask Integration)
+    - bsr_path: Path to the BSR Excel file
+    - df: DataFrame already loaded from BSR (main sheet)
+    - Fixture list sheet = 'Fixture List' or 'Fixtures List' (case-insensitive)
     """
 
-    import pandas as pd
-    import logging
+    # --- Load Excel file ---
+    xl = pd.ExcelFile(bsr_path)
+    sheet_names = xl.sheet_names
 
-    logging.info("🔍 Starting Program Category Check...")
+    # Identify fixture list sheet (case-insensitive)
+    fixture_sheet = next((s for s in sheet_names if "fixture" in s.lower()), None)
 
-    # --- Load Fixture List Sheet ---
-    xl = pd.ExcelFile(filepath)
-    fixture_sheet = next((s for s in xl.sheet_names if "fixture" in s.lower()), None)
+    # --- If fixture sheet is missing ---
     if not fixture_sheet:
-        logging.warning("⚠️ Fixture list sheet not found.")
-        df_bsr["Program_Category_Expected"] = "unknown"
-        df_bsr["Program_Category_Actual"] = df_bsr.get("Type of Program", "")
-        df_bsr["Program_Category_OK"] = False
-        df_bsr["Program_Category_Remark"] = "Fixture list sheet missing"
-        return df_bsr
+        df["Program_Category_Expected"] = "unknown"
+        df["Program_Category_Actual"] = df.get("Type of Program", "")
+        df["Program_Category_OK"] = False
+        df["Program_Category_Remark"] = "Fixture list sheet missing"
+        return df
 
+    # --- Load Fixture Sheet ---
     df_fix = xl.parse(fixture_sheet)
-    logging.info(f"✅ Loaded Fixture sheet '{fixture_sheet}' ({len(df_fix)} rows)")
+    df_fix.columns = df_fix.columns.map(str)  # 🔧 ensure all columns are strings
+    df.columns = df.columns.map(str)
 
-    # --- Identify Columns ---
-    def find_col(df, keywords):
-        for col in df.columns:
-            if any(k in col.lower() for k in keywords):
+    # --- Helper to find columns dynamically ---
+    def find_col(df_, keywords):
+        for col in df_.columns:
+            if isinstance(col, str) and any(k in col.lower() for k in keywords):
                 return col
         return None
 
-    col_bsr_progtype = find_col(df_bsr, ["type"])
-    col_bsr_start = find_col(df_bsr, ["start"])
-    col_bsr_end = find_col(df_bsr, ["end"])
-    col_bsr_home = find_col(df_bsr, ["home"])
-    col_bsr_away = find_col(df_bsr, ["away"])
+    # Identify BSR columns
+    col_home_bsr  = find_col(df, ["home"])
+    col_away_bsr  = find_col(df, ["away"])
+    col_date_bsr  = find_col(df, ["date (utc)", "date"])
+    col_start_bsr = find_col(df, ["start (utc)", "start"])
+    col_end_bsr   = find_col(df, ["end (utc)", "end"])
+    col_progtype  = find_col(df, ["type"])
+    col_desc      = find_col(df, ["program", "description", "title"])
 
-    col_fix_progtype = find_col(df_fix, ["type"])
-    col_fix_start = find_col(df_fix, ["start"])
-    col_fix_end = find_col(df_fix, ["end"])
-    col_fix_home = find_col(df_fix, ["home"])
-    col_fix_away = find_col(df_fix, ["away"])
+    # Identify Fixture columns
+    col_home_fix  = find_col(df_fix, ["home"])
+    col_away_fix  = find_col(df_fix, ["away"])
+    col_date_fix  = find_col(df_fix, ["date"])
+    col_start_fix = find_col(df_fix, ["start"])
+    col_end_fix   = find_col(df_fix, ["end"])
 
-    # --- Convert time columns to datetime ---
-    for c in [col_bsr_start, col_bsr_end, col_fix_start, col_fix_end]:
-        if c is not None:
-            try:
-                if c in df_bsr.columns:
-                    df_bsr[c] = pd.to_datetime(df_bsr[c], errors="coerce")
-                elif c in df_fix.columns:
-                    df_fix[c] = pd.to_datetime(df_fix[c], errors="coerce")
-            except Exception:
-                pass
+    # --- Convert to datetime ---
+    for df_, cols in [(df, [col_start_bsr, col_end_bsr, col_date_bsr]),
+                      (df_fix, [col_start_fix, col_end_fix, col_date_fix])]:
+        for c in cols:
+            if c and c in df_.columns:
+                df_[c] = pd.to_datetime(df_[c], errors="coerce")
 
-    expected_list, actual_list, ok_list, remark_list = [], [], [], []
+    # --- Prepare result containers ---
+    expected, actual, ok_list, remark = [], [], [], []
 
-    for i, bsr_row in df_bsr.iterrows():
-        actual = str(bsr_row.get(col_bsr_progtype, "")).strip().lower()
-        home_team = str(bsr_row.get(col_bsr_home, "")).strip().lower()
-        away_team = str(bsr_row.get(col_bsr_away, "")).strip().lower()
-        bsr_start = bsr_row.get(col_bsr_start)
-        bsr_end = bsr_row.get(col_bsr_end)
+    # --- Row-wise Comparison ---
+    for _, row in df.iterrows():
+        actual_type = str(row.get(col_progtype, "")).strip().lower()
+        desc = str(row.get(col_desc, "")).strip().lower()
+        home = str(row.get(col_home_bsr, "")).strip().lower()
+        away = str(row.get(col_away_bsr, "")).strip().lower()
+        date_bsr = row.get(col_date_bsr)
+        start_bsr = row.get(col_start_bsr)
+        end_bsr = row.get(col_end_bsr)
 
-        expected = "unknown"
-        ok = True
-        remark = "OK"
+        exp_type, ok, note = "unknown", True, "OK"
 
-        # --- Match fixture row ---
-        fix_match = df_fix[
-            (df_fix[col_fix_home].astype(str).str.lower() == home_team)
-            | (df_fix[col_fix_away].astype(str).str.lower() == away_team)
-        ]
-
-        if fix_match.empty:
-            expected = "unknown"
-            ok = False
-            remark = "No matching fixture found"
+        # --- Keyword-based rules ---
+        if any(k in desc for k in ["pre", "studio", "interview", "analysis"]):
+            exp_type = "magazine/support"
+        elif any(k in desc for k in ["highlight", "hits", "recap", "summary", "overview"]):
+            exp_type = "highlights"
         else:
-            fix_row = fix_match.iloc[0]
-            fix_start = fix_row.get(col_fix_start)
-            fix_end = fix_row.get(col_fix_end)
+            # --- Match with Fixture ---
+            fix_match = df_fix[
+                (df_fix[col_home_fix].astype(str).str.lower() == home) &
+                (df_fix[col_away_fix].astype(str).str.lower() == away)
+            ]
 
-            if pd.isna(fix_start) or pd.isna(fix_end) or pd.isna(bsr_start) or pd.isna(bsr_end):
-                expected = "unknown"
-                ok = False
-                remark = "Invalid time values"
+            # Match by date if available
+            if col_date_fix and not pd.isna(date_bsr):
+                fix_match = fix_match[
+                    pd.to_datetime(df_fix[col_date_fix], errors="coerce").dt.date ==
+                    pd.to_datetime(date_bsr).date()
+                ]
+
+            if fix_match.empty:
+                exp_type, ok, note = "unknown", False, "No matching fixture found"
             else:
-                start_diff = abs((bsr_start - fix_start).total_seconds()) / 60
-                end_diff = abs((bsr_end - fix_end).total_seconds()) / 60
+                fix_row = fix_match.iloc[0]
+                start_fix, end_fix = fix_row.get(col_start_fix), fix_row.get(col_end_fix)
 
-                # --- Determine expected category ---
-                if start_diff <= 30 and end_diff <= 30:
-                    expected = "live"
-                elif start_diff <= 70 or end_diff <= 70:
-                    expected = "repeat"
+                if pd.isna(start_fix) or pd.isna(end_fix) or pd.isna(start_bsr) or pd.isna(end_bsr):
+                    exp_type, ok, note = "unknown", False, "Invalid or missing time"
                 else:
-                    expected = "highlights"
+                    # --- Compare times ---
+                    start_diff = abs((start_bsr - start_fix).total_seconds()) / 60
+                    end_diff   = abs((end_bsr - end_fix).total_seconds()) / 60
+                    duration   = abs((end_bsr - start_bsr).total_seconds()) / 60
 
-                # --- Compare ---
-                if expected == actual:
-                    ok = True
-                    remark = "OK"
-                else:
-                    ok = False
-                    remark = f"Expected '{expected}', found '{actual}'"
+                    # --- Duration logic ---
+                    if (90 <= duration <= 150) or (start_diff <= 30 and end_diff <= 30):
+                        exp_type = "live"
+                    elif start_diff <= 70 or end_diff <= 70:
+                        exp_type = "repeat"
+                    else:
+                        exp_type = "highlights"
 
-        expected_list.append(expected)
-        actual_list.append(actual)
+        # --- Final comparison ---
+        ok = (exp_type == actual_type)
+        note = "OK" if ok else f"Expected '{exp_type}', found '{actual_type}'"
+
+        expected.append(exp_type)
+        actual.append(actual_type)
         ok_list.append(ok)
-        remark_list.append(remark)
+        remark.append(note)
 
-        # Console debug print
-        print(f"[{i}] Home={home_team} Away={away_team} Expected={expected} Actual={actual} OK={ok} Remark={remark}")
+    # --- Assign to df and return ---
+    df["Program_Category_Expected"] = expected
+    df["Program_Category_Actual"] = actual
+    df["Program_Category_OK"] = ok_list
+    df["Program_Category_Remark"] = remark
 
-    df_bsr["Program_Category_Expected"] = expected_list
-    df_bsr["Program_Category_Actual"] = actual_list
-    df_bsr["Program_Category_OK"] = ok_list
-    df_bsr["Program_Category_Remark"] = remark_list
-
-    logging.info("✅ Program Category Check completed successfully.")
-    return df_bsr
+    return df
 
 
 # ----------------------------- 7️⃣ Duration Check -----------------------------
 def duration_check(df):
     """
-    Duration Check:
-    1️⃣ Combines Date (UTC/GMT) + Start(UTC)/End(UTC)
-    2️⃣ Calculates actual duration in minutes
-    3️⃣ Validates by program type (Live/Repeat/Highlights/Magazine)
-    4️⃣ Enforces BSA ≤ 180 mins rule for Live/Repeat
+    Duration Check (Hybrid Keyword & Duration Logic):
+    1. Combines Date (UTC/GMT) + Start(UTC)/End(UTC)
+    2. Calculates actual duration in minutes
+    3. Validates by program type using a logic waterfall:
+       - Keywords for Repeat
+       - Keywords AND Duration for Magazine/Highlights
+       - Duration for Live
+    4. Enforces BSA <= 180 mins rule for Live/Repeat
     """
 
     import pandas as pd
     import logging
 
-    logging.info("🚀 Starting Duration Check...")
+    logging.info("🚀 Starting Hybrid Duration Check...")
 
-    # --- Identify relevant columns ---
-    col_date = next((c for c in df.columns if "date" in c.lower() and "gmt" in c.lower()), None)
-    col_start = next((c for c in df.columns if "start" in c.lower() and "utc" in c.lower()), None)
-    col_end = next((c for c in df.columns if "end" in c.lower() and "utc" in c.lower()), None)
-    col_type = next((c for c in df.columns if "type" in c.lower()), None)
-    col_desc = next((c for c in df.columns if "desc" in c.lower()), None)
-    col_source = next((c for c in df.columns if "source" in c.lower()), None)
+    # --- Identify relevant columns (Using exact headers) ---
+    col_date = "Date (UTC/GMT)"
+    col_start = "Start (UTC)"
+    col_end = "End (UTC)"
+    col_type = "Type of program"
+    col_desc = "Program Title" # Using this for description keywords
+    col_source = "Source"
 
-    logging.info(f"✅ Using columns: Date={col_date}, Start={col_start}, End={col_end}, Type={col_type}, Source={col_source}")
+    # --- Check if all required columns exist ---
+    required_cols = [col_date, col_start, col_end, col_type, col_desc, col_source]
+    for col in required_cols:
+        if col not in df.columns:
+            logging.error(f"❌ Missing required column: '{col}'. Stopping duration check.")
+            # Add error columns so the script doesn't fail later
+            df["Duration_OK"] = False
+            df["Duration_Remark"] = f"Missing required column: {col}"
+            df["Duration_Mins"] = None
+            return df
 
-    df["Duration_OK"], df["Duration_Remark"], df["Duration_Mins"] = False, "", None
+    logging.info("✅ All required columns found.")
+
+    # Add the 3 result columns
+    df["Duration_OK"] = False
+    df["Duration_Remark"] = ""
+    df["Duration_Mins"] = None
 
     # --- Combine date + time for UTC columns ---
     try:
@@ -578,39 +565,73 @@ def duration_check(df):
     # --- Compute duration ---
     df["Duration_Mins"] = (df["_EndDT"] - df["_StartDT"]).dt.total_seconds() / 60
 
-    for i, row in df.iterrows():
-        start, end, dur = row["_StartDT"], row["_EndDT"], row["Duration_Mins"]
-        ptype = str(row.get(col_type, "")).lower()
-        desc = str(row.get(col_desc, "")).lower()
-        source = str(row.get(col_source, "")).lower()
+    # --- Define Keyword Lists ---
+    MAG_KEYWORDS = ["pre", "studio", "interview", "analysis"]
+    HI_KEYWORDS = ["highlight", "hits", "recap", "summary", "overview"]
+    REPEAT_KEYWORDS = ["repeat", "replay", "delayed"]
 
-        # Validate time
-        if pd.isna(start) or pd.isna(end) or pd.isna(dur):
+    for i, row in df.iterrows():
+        dur = row["Duration_Mins"]
+        actual_type = str(row.get(col_type, "")).strip().lower()
+        desc = str(row.get(col_desc, "")).strip().lower()
+        source = str(row.get(col_source, "")).strip().lower()
+
+        expected_type = "unknown" # This is our "expected" type
+
+        # 1. Validate time
+        if pd.isna(dur):
             df.at[i, "Duration_Remark"] = "Invalid or missing Start/End UTC"
             continue
 
-        # --- Classify expected type based on duration ---
-        expected = None
-        if dur >= 120: expected = "live"
-        elif 60 <= dur < 120: expected = "repeat"
-        elif 30 <= dur < 60: expected = "highlights"
-        else: expected = "magazine/support"
-
-        # --- Special rule for Football (BSA) ---
-        if "bsa" in source and (ptype in ["live", "repeat"]) and dur > 180:
+        # 2. Special BSA Rule (This is a priority failure check)
+        if "bsa" in source and (actual_type in ["live", "repeat"]) and dur > 180:
             df.at[i, "Duration_OK"] = False
             df.at[i, "Duration_Remark"] = "BSA Live/Repeat > 180 mins (Invalid)"
             continue
 
-        # --- Compare actual vs expected ---
-        if expected in ptype or expected in desc:
+        # 3. --- Start Logic Waterfall to find 'expected_type' ---
+        
+        # Rule 1: Check for Repeat Keywords FIRST (highest priority)
+        # We check both the description AND the actual type column for 'repeat'
+        if any(k in desc for k in REPEAT_KEYWORDS) or any(k in actual_type for k in REPEAT_KEYWORDS):
+            expected_type = "repeat"
+        
+        # Rule 2: Check for Magazine Keywords + Duration
+        elif any(k in desc for k in MAG_KEYWORDS) and (10 <= dur <= 40):
+            expected_type = "magazine/support"
+        
+        # Rule 3: Check for Highlights Keywords + Duration
+        elif any(k in desc for k in HI_KEYWORDS) and (10 <= dur <= 40):
+            expected_type = "highlights"
+        
+        # Rule 4: Check for Live Duration (Fallback)
+        elif 90 <= dur <= 150:
+            expected_type = "live"
+            
+        # 4. --- Final Comparison ---
+        # Now we compare the 'expected_type' we just found to the 'actual_type'
+        
+        # Handle 'delayed' being a 'repeat'
+        if expected_type == "repeat" and actual_type == "delayed":
+             df.at[i, "Duration_OK"] = True
+             df.at[i, "Duration_Remark"] = "OK"
+        
+        elif expected_type == actual_type:
             df.at[i, "Duration_OK"] = True
             df.at[i, "Duration_Remark"] = "OK"
-        else:
-            df.at[i, "Duration_OK"] = False
-            df.at[i, "Duration_Remark"] = f"Expected {expected}, found {ptype or desc}"
+        
+        elif expected_type == "unknown":
+            df.at[i, "Duration_OK"] = False # Failed
+            df.at[i, "Duration_Remark"] = f"Unclassified: Found '{actual_type}' with {dur:.0f} min duration"
+        
+        else: # Mismatch
+            df.at[i, "Duration_OK"] = False # Failed
+            df.at[i, "Duration_Remark"] = f"Expected '{expected_type}', found '{actual_type}'"
 
-    logging.info("✅ Duration Check Completed.")
+    # Clean up temporary columns
+    df = df.drop(columns=["_StartDT", "_EndDT"], errors="ignore")
+
+    logging.info("✅ Hybrid Duration Check Completed.")
     return df
 
 # 8️⃣ Event / Matchday / Competition Check
@@ -828,14 +849,14 @@ def domestic_market_check(df, league_keyword="F24 Spain", debug=False):
     - Highlights & Magazine & Support are marked as Not Applicable.
     """
 
-    logging.info(f"🏠 Running domestic market coverage check for league: {league_keyword}")
+    logging.info(f" Running domestic market coverage check for league: {league_keyword}")
 
     # Ensure columns exist
     required_cols = ["Market", "Competition", "Event", "Type of program", "Matchday"]
     for col in required_cols:
         if col not in df.columns:
-            logging.warning(f"⚠️ Missing required column: {col}")
-            df["Domestic Market Coverage Check_OK"] = "Not Applicable"
+            logging.warning(f" Missing required column: {col}")
+            df["Domestic_Market_Coverage_Check_OK"] = "Not Applicable"
             df["Domestic Market Coverage Remark"] = "Required column missing"
             return df
 
@@ -860,18 +881,18 @@ def domestic_market_check(df, league_keyword="F24 Spain", debug=False):
     )
 
     # Initialize output columns
-    df["Domestic Market Coverage Check_OK"] = "Not Applicable"
+    df["Domestic_Market_Coverage_Check_OK"] = "Not Applicable"
     df["Domestic Market Coverage Remark"] = "Not Applicable"
 
     # Get all matchdays for the league
     laliga_rows = df[df["is_laliga"] & df["is_spain_market"]]
     if laliga_rows.empty:
-        logging.warning("⚠️ No LaLiga (F24 Spain) entries found for Spain market.")
+        logging.warning(" No LaLiga (F24 Spain) entries found for Spain market.")
         return df
 
     all_matchdays = laliga_rows["Matchday"].unique()
     if debug:
-        logging.info(f"🧩 Found {len(all_matchdays)} matchdays for Spain market: {all_matchdays}")
+        logging.info(f" Found {len(all_matchdays)} matchdays for Spain market: {all_matchdays}")
 
     # Check for coverage (Live & Delayed) in Spain
     for md in all_matchdays:
@@ -886,29 +907,29 @@ def domestic_market_check(df, league_keyword="F24 Spain", debug=False):
             logging.info(f"🔍 Matchday {md}: Live={live_present}, Delayed={delayed_present}, Rows={len(md_rows)}")
 
         if not live_present and not delayed_present:
-            df.loc[condition, "Domestic Market Coverage Check_OK"] = "FALSE"
+            df.loc[condition, "Domestic_Market_Coverage_Check_OK"] = "FALSE"
             df.loc[condition, "Domestic Market Coverage Remark"] = f"No live/delayed coverage for matchday {md}"
         elif live_present and delayed_present:
-            df.loc[condition, "Domestic Market Coverage Check_OK"] = "TRUE"
+            df.loc[condition, "Domestic_Market_Coverage_Check_OK"] = "TRUE"
             df.loc[condition, "Domestic Market Coverage Remark"] = f"Live & delayed coverage present for matchday {md}"
         elif live_present or delayed_present:
-            df.loc[condition, "Domestic Market Coverage Check_OK"] = "TRUE"
+            df.loc[condition, "Domestic_Market_Coverage_Check_OK"] = "TRUE"
             df.loc[condition, "Domestic Market Coverage Remark"] = f"Partial coverage for matchday {md}"
 
     # For highlights / magazine rows in Spain
     mask_highlights = df["Type of program"].str.contains("Highlight|Magazine", case=False, na=False) & df["is_spain_market"]
-    df.loc[mask_highlights, "Domestic Market Coverage Check_OK"] = "Not Applicable"
+    df.loc[mask_highlights, "Domestic_Market_Coverage_Check_OK"] = "Not Applicable"
     df.loc[mask_highlights, "Domestic Market Coverage Remark"] = "Not applicable for highlights or magazine programs"
 
     # For other markets (non-Spain)
     mask_others = ~df["is_spain_market"]
-    df.loc[mask_others, "Domestic Market Coverage Check_OK"] = "Not Applicable"
+    df.loc[mask_others, "Domestic_Market_Coverage_Check_OK"] = "Not Applicable"
     df.loc[mask_others, "Domestic Market Coverage Remark"] = "Other market, not applicable"
 
     if debug:
-        true_count = (df["Domestic Market Coverage Check_OK"] == "TRUE").sum()
-        false_count = (df["Domestic Market Coverage Check_OK"] == "FALSE").sum()
-        na_count = (df["Domestic Market Coverage Check_OK"] == "Not Applicable").sum()
+        true_count = (df["Domestic_Market_Coverage_Check_OK"] == "TRUE").sum()
+        false_count = (df["Domestic_Market_Coverage_Check_OK"] == "FALSE").sum()
+        na_count = (df["Domestic_Market_Coverage_Check_OK"] == "Not Applicable").sum()
         logging.info(f"✅ Domestic Market Check Summary: TRUE={true_count}, FALSE={false_count}, N/A={na_count}")
 
     # Drop helper columns
@@ -1033,47 +1054,47 @@ def rates_and_ratings_check(df):
 
 def duplicated_market_check(df, macro_path, league_keyword="F24 Spain", debug=False):
     """
-    🧩 Duplicated Markets QC Check
-    --------------------------------
+    ✅ Duplicated Markets QC Check 
+    -------------------------------------------------
     Goal:
-        Identify if any markets in the BSR file are marked as 'Duplicate Markets'
-        in the Macro's "Data Core" sheet for the selected league (e.g. 'F24 Spain').
+        Identify markets in BSR that are listed as 'Duplicate Markets'
+        in the Macro file (Data Core sheet) for a given league.
 
     Inputs:
-        - df: BSR DataFrame.
-        - macro_path: path to the Macro Market Duplicator file (.xlsm).
-        - league_keyword: the league name (e.g., 'F24 Spain').
-        - debug: if True, prints additional debug logs.
+        df: BSR DataFrame
+        macro_path: path to Macro Market Duplicator file (.xlsm)
+        league_keyword: league name (default = "F24 Spain")
+        debug: if True, prints debug information
 
     Output:
-        Adds two columns to df:
-            - Duplicated Markets Check_OK  → TRUE / FALSE / Not Applicable
-            - Duplicated Markets Remark    → reason for the result
+        Adds:
+            - Duplicated_Markets_Check_OK  (TRUE / FALSE / Not Applicable / Error)
+            - Duplicated_Markets_Remark
     """
 
-    result_col = "Duplicated Markets Check_OK"
-    remark_col = "Duplicated Markets Remark"
+    result_col = "Duplicated_Markets_Check_OK"
+    remark_col = "Duplicated_Markets_Remark"
 
-    # --- Case 1: Missing macro file ---
+    # Case 1️⃣: No Macro file
     if not macro_path or not os.path.exists(macro_path):
         df[result_col] = "Not Applicable"
         df[remark_col] = "Macro file missing"
         return df
 
     try:
-        # 🧠 Read 'Data Core' sheet (headers start on 2nd row)
+        # --- Load and clean Macro Data ---
         macro_df = pd.read_excel(macro_path, sheet_name="Data Core", header=1)
         macro_df.columns = macro_df.columns.str.strip().str.replace('\xa0', ' ', regex=True)
 
         required_cols = ["Projects", "Dup Market"]
-        missing_cols = [c for c in required_cols if c not in macro_df.columns]
-        if missing_cols:
-            raise ValueError(f"Missing columns in Macro file: {missing_cols}")
+        if not all(c in macro_df.columns for c in required_cols):
+            missing = [c for c in required_cols if c not in macro_df.columns]
+            raise ValueError(f"Missing columns in Macro file: {missing}")
 
         if debug:
             print("✅ Macro columns:", macro_df.columns.tolist())
 
-        # --- Filter rows for selected league ---
+        # --- Filter Macro by League Keyword ---
         macro_filtered = macro_df[
             macro_df["Projects"].astype(str).str.contains(league_keyword, case=False, na=False)
         ].copy()
@@ -1083,42 +1104,42 @@ def duplicated_market_check(df, macro_path, league_keyword="F24 Spain", debug=Fa
             df[remark_col] = f"No matching league ({league_keyword}) found in Macro"
             return df
 
-        # --- Get list of duplicate markets ---
-        duplicate_markets = macro_filtered["Dup Market"].dropna().unique().tolist()
-        duplicate_markets_clean = [m.strip().lower() for m in duplicate_markets]
+        # --- Extract Duplicate Market List ---
+        duplicate_markets = (
+            macro_filtered["Dup Market"].dropna().astype(str).str.strip().str.lower().unique().tolist()
+        )
 
         if debug:
-            print(f"🔍 Duplicate markets for {league_keyword}: {duplicate_markets_clean}")
+            print(f"🔍 Duplicate Markets for {league_keyword}: {duplicate_markets}")
 
-        # --- Normalize data for matching ---
+        # --- Normalize BSR Data ---
         df["Market_clean"] = df["Market"].astype(str).str.strip().str.lower()
         df["Competition_clean"] = df["Competition"].astype(str).str.strip().str.lower()
         df["Event_clean"] = df["Event"].astype(str).str.strip().str.lower()
 
-        # --- Initialize columns ---
+        # --- Determine if each row belongs to the selected league ---
+        in_league_mask = (
+            df["Competition_clean"].str.contains(league_keyword.lower(), na=False)
+            | df["Event_clean"].str.contains(league_keyword.lower(), na=False)
+        )
+
+        # --- Initialize result columns ---
         df[result_col] = "Not Applicable"
-        df[remark_col] = "Not applicable"
+        df[remark_col] = "Different competition/event"
 
-        # --- Apply logic row by row ---
-        for i, row in df.iterrows():
-            market = row["Market_clean"]
-            comp = row["Competition_clean"]
-            event = row["Event_clean"]
+        # --- Apply vectorized duplicate check ---
+        league_df = df[in_league_mask]
+        df.loc[in_league_mask, result_col] = league_df["Market_clean"].isin(duplicate_markets).map(
+            {True: "FALSE", False: "TRUE"}
+        )
 
-            # Only consider rows for this league
-            if league_keyword.lower() not in comp and league_keyword.lower() not in event:
-                df.at[i, result_col] = "Not Applicable"
-                df.at[i, remark_col] = "Different competition/event"
-                continue
+        df.loc[in_league_mask, remark_col] = league_df["Market_clean"].apply(
+            lambda m: f"Duplicate market ({m}) found in Macro"
+            if m in duplicate_markets
+            else f"Valid market ({m}) not listed as duplicate"
+        )
 
-            if market in duplicate_markets_clean:
-                df.at[i, result_col] = "FALSE"
-                df.at[i, remark_col] = f"Duplicate market ({market}) found in Macro"
-            else:
-                df.at[i, result_col] = "TRUE"
-                df.at[i, remark_col] = f"Valid market ({market}) not listed as duplicate"
-
-        # --- Cleanup ---
+        # --- Cleanup temporary columns ---
         df.drop(columns=["Market_clean", "Competition_clean", "Event_clean"], inplace=True, errors="ignore")
 
         if debug:
@@ -1198,63 +1219,56 @@ def country_channel_id_check(df):
     return df_result
 
 # -----------------------------------------------------------
-# 14️⃣ Client Data / LSTV / OTT Check (corrected)
 def client_lstv_ott_check(df_worksheet, project_config=None):
     """
-    Checks:
-      - Market and Channel ID consistency
-      - Inclusion of Client Data, LSTV, OTT sources
-    Returns:
-      df with:
-        - Client_LSTV_OTT_OK (True/False)
-        - Client_LSTV_OTT_Remark
+    Ensures:
+      - Each Channel ID maps consistently to one Market ID
+      - Each Market ID maps consistently to one Channel ID
+      - Client/LSTV/OTT presence is checked
     """
-
     df = df_worksheet.copy()
     df["Client_LSTV_OTT_OK"] = True
     df["Client_LSTV_OTT_Remark"] = ""
 
-    # --- 1️⃣ Market / Channel ID consistency ---
-    if "Market ID" in df.columns and "Channel ID" in df.columns:
-        # Identify Channel IDs belonging to multiple Market IDs
-        multi_market = df.groupby("Channel ID")["Market ID"].nunique()
-        multi_market_channels = multi_market[multi_market > 1].index.tolist()
+    # --- Normalize values ---
+    def norm(x):
+        return str(x).strip().lower() if pd.notna(x) else ""
 
-        # Identify Market IDs belonging to multiple Channel IDs
-        multi_channel = df.groupby("Market ID")["Channel ID"].nunique()
-        multi_channel_ids = multi_channel[multi_channel > 1].index.tolist()
-    else:
-        multi_market_channels = []
-        multi_channel_ids = []
-
-    # --- 2️⃣ Client / LSTV / OTT inclusion ---
-    pay_free_col = "Pay/Free TV" if "Pay/Free TV" in df.columns else None
-
-    # Define expected sources
-    expected_sources = ["lstv", "client", "ott"]
+    # --- Build mapping dicts ---
+    channel_to_market = {}
+    market_to_channel = {}
 
     for idx, row in df.iterrows():
+        ch_id = norm(row.get("Channel ID"))
+        mk_id = norm(row.get("Market ID"))
+
         remarks = []
         ok = True
 
-        # Market / Channel mapping issues
-        if row.get("Channel ID") in multi_market_channels:
-            ok = False
-            remarks.append("Channel assigned to multiple Market IDs")
-
-        if row.get("Market ID") in multi_channel_ids:
-            ok = False
-            remarks.append("Market ID assigned to multiple Channel IDs")
-
-        # Client / LSTV / OTT source checks
-        if pay_free_col:
-            val = str(row.get(pay_free_col, "")).strip().lower()
-            # Only mark False if none of the expected sources are present
-            if not any(source in val for source in expected_sources):
+        # 🔹 Channel → Market mapping consistency
+        if ch_id:
+            if ch_id in channel_to_market and channel_to_market[ch_id] != mk_id:
+                remarks.append(f"Channel ID {ch_id} linked to multiple Market IDs ({channel_to_market[ch_id]} vs {mk_id})")
                 ok = False
-                remarks.append(f"Missing required source (Client/LSTV/OTT): {row.get(pay_free_col, '')}")
+            else:
+                channel_to_market[ch_id] = mk_id
 
-        # Write results
+        # 🔹 Market → Channel mapping consistency
+        if mk_id:
+            if mk_id in market_to_channel and market_to_channel[mk_id] != ch_id:
+                remarks.append(f"Market ID {mk_id} linked to multiple Channel IDs ({market_to_channel[mk_id]} vs {ch_id})")
+                ok = False
+            else:
+                market_to_channel[mk_id] = ch_id
+
+        # 🔹 Client / LSTV / OTT check
+        pay_col = "Pay/Free TV"
+        if pay_col in df.columns:
+            val = norm(row.get(pay_col, ""))
+            if not any(k in val for k in ["client", "lstv", "ott"]):
+                remarks.append(f"Missing Client/LSTV/OTT source: {row.get(pay_col, '')}")
+                ok = False
+
         df.at[idx, "Client_LSTV_OTT_OK"] = ok
         df.at[idx, "Client_LSTV_OTT_Remark"] = "; ".join(remarks) if remarks else "OK"
 

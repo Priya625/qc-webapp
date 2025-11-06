@@ -108,13 +108,14 @@ def run_qc():
         df = period_check(df, start_date, end_date)
         df = completeness_check(df)
         df = overlap_duplicate_daybreak_check(df)
-        df = program_category_check(bsr_path, df)
+        df = program_category_check(bsr_path,df)
         df = duration_check(df)
         df = check_event_matchday_competition(df, bsr_path)
         df = market_channel_consistency_check(df, rosco_path, bsr_path)
 
         # 🟡 Domestic Market Coverage Check (LaLiga logic)
         df = domestic_market_check(df, league_keyword="F24 Spain", debug=True)
+        df = rates_and_ratings_check(df)
 
         # 🟢 Duplicated Markets Check (using macro file)
         df = duplicated_market_check(df, macro_path, league_keyword="F24 Spain", debug=True)
