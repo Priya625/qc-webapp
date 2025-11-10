@@ -6,6 +6,10 @@ import logging
 import time
 from qc_checks import *
 
+st.subheader("🔍 Debug File Uploader Test")
+test_file = st.file_uploader("Try to upload ANY file here", type=None)
+if test_file:
+    st.success(f"✅ Uploaded: {test_file.name}")
 # --- Load Configuration ---
 try:
     with open("config.json", "r", encoding="utf-8") as f:
@@ -53,7 +57,7 @@ st.caption("Upload your Rosco, BSR, and Macro files to run automated quality che
 # --- File Uploaders ---
 rosco_file = st.file_uploader("📘 Upload Rosco File", type=["xlsx"])
 bsr_file = st.file_uploader("📙 Upload BSR File", type=["xlsx"])
-macro_file = st.file_uploader("📒 Upload Macro File (Optional)", type=["xlsx"])
+macro_file = st.file_uploader("📒 Upload Macro File (Optional)", type=["xlsx","xls","xlsm","xlsb"])
 
 if st.button("🚀 Run QC Checks"):
     if not rosco_file or not bsr_file:
