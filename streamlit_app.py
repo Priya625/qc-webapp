@@ -53,7 +53,6 @@ st.caption("Upload your Rosco, BSR, and Macro files to run automated quality che
 # --- File Uploaders ---
 rosco_file = st.file_uploader("📘 Upload Rosco File", type=["xlsx"])
 bsr_file = st.file_uploader("📙 Upload BSR File", type=["xlsx"])
-data_file = st.file_uploader("📗 Upload Data File (Optional)", type=["xlsx"])
 macro_file = st.file_uploader("📒 Upload Macro File (Optional)", type=["xlsx"])
 
 if st.button("🚀 Run QC Checks"):
@@ -66,14 +65,11 @@ if st.button("🚀 Run QC Checks"):
             # --- Save uploaded files locally ---
             rosco_path = os.path.join(UPLOAD_FOLDER, rosco_file.name)
             bsr_path = os.path.join(UPLOAD_FOLDER, bsr_file.name)
-            data_path = os.path.join(UPLOAD_FOLDER, data_file.name) if data_file else None
             macro_path = os.path.join(UPLOAD_FOLDER, macro_file.name) if macro_file else None
 
             with open(rosco_path, "wb") as f: f.write(rosco_file.getbuffer())
             with open(bsr_path, "wb") as f: f.write(bsr_file.getbuffer())
-            if data_file: 
-                with open(data_path, "wb") as f: f.write(data_file.getbuffer())
-            if macro_file: 
+            if macro_file:
                 with open(macro_path, "wb") as f: f.write(macro_file.getbuffer())
 
             # --- Detect monitoring period ---
