@@ -6,10 +6,6 @@ import logging
 import time
 from qc_checks import *
 
-st.subheader("🔍 Debug File Uploader Test")
-test_file = st.file_uploader("Try to upload ANY file here", type=None)
-if test_file:
-    st.success(f"✅ Uploaded: {test_file.name}")
 # --- Load Configuration ---
 try:
     with open("config.json", "r", encoding="utf-8") as f:
