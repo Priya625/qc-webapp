@@ -78,7 +78,7 @@
       "highlight_keywords": ["highlight", "hits", "recap", "summary", "overview"],
       "magazine_keywords": ["pre", "post", "studio", "interview", "analysis"],
       "live_tolerance_min": 30,
-      "support_duration_min": 10,
+      "support_duration_min": 0.0333,
       "support_duration_max": 60,
       "bsa_max_duration": 180
     },

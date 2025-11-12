@@ -54,7 +54,7 @@ def _is_present(val):
     s = str(val).strip()
     if s == "":
         return False
-    if s.lower() in ("nan", "none"):
+    if s.lower() in ("nan", "none","null", "n/a", "-","NAN","NONE","NULL","N/A"):
         return False
     return True
 
@@ -176,8 +176,13 @@ def completeness_check(df, bsr_cols, rules):
         missing = []
 
         # 1️⃣ Mandatory Fields
-        for logical, display in [("tv_channel", "TV Channel"), ("channel_id", "Channel ID"),
-                                 ("match_day", "Match Day"), ("source", "Source")]:
+        for logical, display in [
+            ("tv_channel", "TV Channel"), 
+            ("channel_id", "Channel ID"),
+            ("match_day", "Match Day"), 
+            ("source", "Source"),
+            ("type_of_program", "Type of Program") # <-- THIS IS THE NEW LINE
+        ]:
             colname = colmap.get(logical)
             if colname is None:
                 missing.append(f"{display} (column not found)")
@@ -213,8 +218,10 @@ def completeness_check(df, bsr_cols, rules):
 
         elif prog_type not in relaxed_types:
             # Check for other types that *should* have teams
-            if home_col and not _is_present(row.get(home_col)): missing.append("Home Team")
-            if away_col and not _is_present(row.get(away_col)): missing.append("Away Team")
+            # This logic is OK, but it only runs if prog_type is not empty
+            if prog_type and not (prog_type in live_types or prog_type in relaxed_types):
+                if home_col and not _is_present(row.get(home_col)): missing.append("Home Team")
+                if away_col and not _is_present(row.get(away_col)): missing.append("Away Team")
 
         # 4️⃣ Final result
         if missing:
@@ -621,10 +628,11 @@ def check_event_matchday_competition(df, bsr_path, col_map, file_rules):
         df["Event_Matchday_Remark"] = "Error: 'Type of program' column not found."
         return df
 
-    df["Event_Matchday_OK"] = pd.NA # Default to Not Applicable
+    # Default for all rows - will be overwritten for matches
+    df["Event_Matchday_OK"] = pd.NA 
     df["Event_Matchday_Remark"] = "Not applicable for this program type"
 
-    # Load fixture list
+    # --- Load fixture list ---
     fixture_df = None
     try:
         excel_file = pd.ExcelFile(bsr_path)
@@ -639,33 +647,37 @@ def check_event_matchday_competition(df, bsr_path, col_map, file_rules):
     except Exception as e:
         logging.error(f"❌ Error loading fixture list: {e}")
 
+    # --- Normalize fixture data ---
     if fixture_df is not None:
-        # Find fixture columns using config
         fix_event_col = _find_column(fixture_df, fix_cols['event'])
         fix_home_col = _find_column(fixture_df, fix_cols['home_team'])
         fix_away_col = _find_column(fixture_df, fix_cols['away_team'])
         fix_md_col = _find_column(fixture_df, fix_cols['match_day'])
 
-        # Normalize fixture data
         for col in [fix_event_col, fix_home_col, fix_away_col, fix_md_col]:
             if col:
                 fixture_df[col] = fixture_df[col].astype(str).str.strip().str.lower()
             else:
                 logging.warning(f"⚠️ Fixture list missing a key column. Check config.")
-                fixture_df = None # Invalidate
+                fixture_df = None 
                 break
 
-    # Find BSR columns
+    # --- Find BSR columns ---
     bsr_event_col = _find_column(df, bsr_cols['event'])
     bsr_home_col = _find_column(df, bsr_cols['home_team'])
     bsr_away_col = _find_column(df, bsr_cols['away_team'])
     bsr_md_col = _find_column(df, bsr_cols['match_day'])
 
+    # --- Define all program types that are full matches ---
+    # This matches your flowchart's first check
+    match_program_types = ['live', 'repeat', 'delayed']
+
     for i, row in df.iterrows():
         try:
             prog_type = str(row.get(col_progtype, "")).strip().lower()
 
-            if prog_type == 'live':
+            # --- This is the "YES" branch of your flowchart ---
+            if prog_type in match_program_types:
                 if fixture_df is None:
                     df.at[i, "Event_Matchday_OK"] = False
                     df.at[i, "Event_Matchday_Remark"] = "Fixture list missing or invalid"
@@ -681,6 +693,7 @@ def check_event_matchday_competition(df, bsr_path, col_map, file_rules):
                     df.at[i, "Event_Matchday_Remark"] = "Missing event/home/away/matchday in BSR"
                     continue
 
+                # Check if this match exists in the fixture list
                 match = fixture_df[
                     (fixture_df[fix_event_col] == event)
                     & (fixture_df[fix_home_col] == home)
@@ -688,14 +701,16 @@ def check_event_matchday_competition(df, bsr_path, col_map, file_rules):
                     & (fixture_df[fix_md_col] == matchday)
                 ]
 
+                # This is the "Match Found?" check
                 if match.empty:
                     df.at[i, "Event_Matchday_OK"] = False
                     df.at[i, "Event_Matchday_Remark"] = "No matching fixture found"
                 else:
                     df.at[i, "Event_Matchday_OK"] = True
-                    df.at[i, "Event_Matchday_Remark"] = "Fixture found"
+                    df.at[i, "Event_MatchMday_Remark"] = "Fixture found"
             
-            # Else: keep default "Not Applicable"
+            # --- This is the "NO" branch of your flowchart ---
+            # (If prog_type is not a match, it keeps the default "Not applicable" values)
 
         except Exception as e:
             df.at[i, "Event_Matchday_OK"] = False

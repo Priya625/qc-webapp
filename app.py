@@ -141,7 +141,7 @@ def run_qc():
 
         # --- Run QC Checks (pass config parts) ---
         df = period_check(df, start_date, end_date, col_map["bsr"])
-        df = completeness_check(df, col_map["bsr"], rules["program_category"])
+        df = completeness_check(df, col_map["bsr"], rules)
         df = overlap_duplicate_daybreak_check(df, col_map["bsr"], rules["overlap_check"])
         df = program_category_check(bsr_path, df, col_map, rules["program_category"], file_rules)
         df = check_event_matchday_competition(df, bsr_path, col_map, file_rules)
