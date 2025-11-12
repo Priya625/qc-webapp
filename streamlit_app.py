@@ -73,7 +73,6 @@ st.caption("Upload your Rosco, BSR, and optional Data/Macro files to run automat
 # File Uploaders
 rosco_file = st.file_uploader("📘 Upload Rosco File", type=["xlsx"])
 bsr_file = st.file_uploader("📙 Upload BSR File", type=["xlsx"])
-data_file = st.file_uploader("📗 Upload Data File (Optional)", type=["xlsx"])
 macro_file = st.file_uploader("📒 Upload Macro File (Optional)", type=["xlsx", "xls", "xlsm", "xlsb"])
 
 if st.button("🚀 Run QC Checks"):
