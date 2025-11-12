@@ -68,13 +68,16 @@ cleanup_old_files(OUTPUT_FOLDER, app_config.get("max_file_age_min", 30))
 # -----------------------------------------------------------
 st.set_page_config(page_title="QC Automation App", layout="wide")
 st.title("⚙️ QC Automation WebApp")
-st.caption("Upload your Rosco, BSR, and optional Data/Macro files to run automated QC checks.")
+st.caption("Upload your Rosco, BSR, and optional Macro file to run automated QC checks.")
 
-# File Uploaders
+# --- File Uploaders ---
 rosco_file = st.file_uploader("📘 Upload Rosco File", type=["xlsx"])
 bsr_file = st.file_uploader("📙 Upload BSR File", type=["xlsx"])
 macro_file = st.file_uploader("📒 Upload Macro File (Optional)", type=["xlsx", "xls", "xlsm", "xlsb"])
 
+# -----------------------------------------------------------
+#                 RUN QC LOGIC
+# -----------------------------------------------------------
 if st.button("🚀 Run QC Checks"):
     if not rosco_file or not bsr_file:
         st.warning("⚠️ Please upload both Rosco and BSR files before running QC.")
@@ -90,17 +93,13 @@ if st.button("🚀 Run QC Checks"):
             with open(bsr_path, "wb") as f:
                 f.write(bsr_file.getbuffer())
 
-            data_path, macro_path = None, None
-            if data_file:
-                data_path = os.path.join(UPLOAD_FOLDER, data_file.name)
-                with open(data_path, "wb") as f:
-                    f.write(data_file.getbuffer())
+            macro_path = None
             if macro_file:
                 macro_path = os.path.join(UPLOAD_FOLDER, macro_file.name)
                 with open(macro_path, "wb") as f:
                     f.write(macro_file.getbuffer())
 
-            logging.info(f"📁 Uploaded → Rosco: {rosco_path}, BSR: {bsr_path}, Data: {data_path}, Macro: {macro_path}")
+            logging.info(f"📁 Uploaded → Rosco: {rosco_path}, BSR: {bsr_path}, Macro: {macro_path}")
 
             # --- Load Config Subsections ---
             col_map = config["column_mappings"]
@@ -118,7 +117,7 @@ if st.button("🚀 Run QC Checks"):
             df = df.applymap(lambda x: str(x).replace("\xa0", " ").strip() if isinstance(x, str) else x)
             df.rename(columns={"Start(UTC)": "Start (UTC)", "End(UTC)": "End (UTC)"}, inplace=True)
 
-            # --- Run QC Checks ---
+            # --- Run QC Checks (same order as Flask app) ---
             df = period_check(df, start_date, end_date, col_map["bsr"])
             df = completeness_check(df, col_map["bsr"], rules)
             df = overlap_duplicate_daybreak_check(df, col_map["bsr"], rules["overlap_check"])
@@ -130,7 +129,7 @@ if st.button("🚀 Run QC Checks"):
             df = duplicated_market_check(df, macro_path, project, col_map, file_rules, debug=True)
             df = country_channel_id_check(df, col_map["bsr"])
             df = client_lstv_ott_check(df, col_map["bsr"], rules["client_check"])
-            df = rates_and_ratings_check(df, col_map["bsr"])  # repeat intentionally
+            df = rates_and_ratings_check(df, col_map["bsr"])  # repeated intentionally
 
             # --- Save Output ---
             output_prefix = file_rules.get("output_prefix", "QC_Result_")
