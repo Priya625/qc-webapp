@@ -49,7 +49,8 @@
       "pay_tv": ["Pay/Free TV"],
       "source": ["Source", "AudienceSource", "Audience Source", "Audience_Source"],
       "aud_estimates": ["Aud. Estimates ['000s]", "Audience Estimates", "Aud Estimates"],
-      "aud_metered": ["Aud Metered (000s) 3+", "Audience Metered", "Aud. Metered (000s) 3+"]
+      "aud_metered": ["Aud Metered (000s) 3+", "Audience Metered", "Aud. Metered (000s) 3+"],
+      "combined": ["Combined", "Channel Combined", "Combined ID"]
     },
     "fixture": {
       "home_team": ["Home Team", "Home"],
@@ -86,7 +87,7 @@
       "keywords": ["client", "lstv", "ott"]
     },
     "overlap_check": {
-      "daybreak_gap_tolerance_min": 2,
+      "daybreak_midnight_tolerance_min": 30,
       "ignore_platforms": ["ott", "internet", "www"]
     }
   }
