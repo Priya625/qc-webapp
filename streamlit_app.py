@@ -12,7 +12,7 @@ from qc_checks import *  # keep your existing QC functions: load_bsr, detect_per
 # -----------------------------------------------------------
 #                CONFIGURATION SETUP
 # -----------------------------------------------------------
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 try:
@@ -25,6 +25,18 @@ except json.JSONDecodeError as e:
     st.error(f"FATAL ERROR: config.json is invalid: {e}")
     st.stop()
 
+# Validate required config sections early and fail gracefully with a helpful message
+required_keys = ["column_mappings", "qc_rules", "project_rules", "file_rules", "app_settings"]
+missing = [k for k in required_keys if k not in config]
+if missing:
+    st.error(
+        "FATAL ERROR: config.json is missing required keys: "
+        f"{', '.join(missing)}. Please ensure the config file includes these sections."
+    )
+    # show what keys are present to aid debugging
+    st.write("Keys present in loaded config:", list(config.keys()))
+    st.stop()
+
 app_config = config.get("app_settings", {})
 
 # -----------------------------------------------------------
@@ -35,7 +47,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(log_file),
+        logging.FileHandler(os.path.join(BASE_DIR, log_file)),
         logging.StreamHandler()
     ]
 )
@@ -113,11 +125,17 @@ def cleanup_datetime_columns(df):
 st.set_page_config(page_title="QC Runner", layout="wide")
 st.title("QC Runner (Streamlit)")
 
+st.sidebar.header("Configuration")
+st.sidebar.write(f"Project: **{config.get('project_rules', {}).get('project_name', 'N/A')}**")
+st.sidebar.write(f"Max file age (min): **{app_config.get('max_file_age_min', 30)}**")
+st.sidebar.write(f"Cleanup interval (sec): **{app_config.get('cleanup_interval_sec', 300)}**")
+
 st.header("Upload files")
 st.write("Upload the required files (Rosco and BSR). Optional files: Data, Macro.")
 
 rosco_file = st.file_uploader("Rosco file (required)", type=None, key="rosco")
 bsr_file = st.file_uploader("BSR file (required)", type=None, key="bsr")
+data_file = st.file_uploader("Data file (optional)", type=None, key="data")
 macro_file = st.file_uploader("Macro file (optional)", type=None, key="macro")
 
 run_button = st.button("Run QC")
@@ -134,10 +152,17 @@ if run_button:
             with st.spinner("Running QC..."):
                 logging.info("QC process started (Streamlit)")
 
-                col_map = config["column_mappings"]
-                rules = config["qc_rules"]
-                project = config["project_rules"]
-                file_rules = config["file_rules"]
+                # Safely fetch required config sections (we validated earlier)
+                col_map = config.get("column_mappings")
+                rules = config.get("qc_rules")
+                project = config.get("project_rules")
+                file_rules = config.get("file_rules")
+
+                # Sanity check (shouldn't hit due to earlier validation)
+                if not col_map or not rules or not project or not file_rules:
+                    st.error("Configuration sections missing after initial validation. Aborting.")
+                    logging.error("Configuration sections missing during run.")
+                    st.stop()
 
                 # Cleanup old files first (immediate)
                 cleanup_old_files(UPLOAD_FOLDER, app_config.get("max_file_age_min", 30))
