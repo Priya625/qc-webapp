@@ -113,17 +113,11 @@ def cleanup_datetime_columns(df):
 st.set_page_config(page_title="QC Runner", layout="wide")
 st.title("QC Runner (Streamlit)")
 
-st.sidebar.header("Configuration")
-st.sidebar.write(f"Project: **{config.get('project_rules', {}).get('project_name', 'N/A')}**")
-st.sidebar.write(f"Max file age (min): **{app_config.get('max_file_age_min', 30)}**")
-st.sidebar.write(f"Cleanup interval (sec): **{app_config.get('cleanup_interval_sec', 300)}**")
-
 st.header("Upload files")
 st.write("Upload the required files (Rosco and BSR). Optional files: Data, Macro.")
 
 rosco_file = st.file_uploader("Rosco file (required)", type=None, key="rosco")
 bsr_file = st.file_uploader("BSR file (required)", type=None, key="bsr")
-data_file = st.file_uploader("Data file (optional)", type=None, key="data")
 macro_file = st.file_uploader("Macro file (optional)", type=None, key="macro")
 
 run_button = st.button("Run QC")
