@@ -8,210 +8,97 @@
     "cleanup_interval_sec": 300,
     "max_file_age_min": 30
   },
-  "file_types": {
-    "Laliga_Default": {
-      "input_sheet_name": 0,
-      "output_sheet_name": "QC Results",
-      "summary_sheet_name": "Summary",
-      "fixture_sheet_keyword": "fixture",
-      "macro_sheet_name": "Data Core",
-      "macro_header_row": 1,
-      "rosco_ignore_sheet": "general",
-      "project_rules": {
-        "league_keyword": "F24 Spain",
-        "domestic_market": "Spain",
-        "domestic_league_keywords": [
-          "F24 Spain",
-          "LaLiga",
-          "Liga",
-          "Primera",
-          "Segunda",
-          "Liga Española"
-        ]
-      },
-      "column_mappings": {
-        "bsr": {
-          "tv_channel": [
-            "TV Channel",
-            "TV-Channel",
-            "Channel",
-            "TV Channel "
-          ],
-          "channel_id": [
-            "Channel ID",
-            "ChannelID",
-            "Nielsen Channel ID"
-          ],
-          "market": [
-            "Market",
-            "Country",
-            "Market "
-          ],
-          "date": [
-            "Date",
-            "Date (UTC/GMT)"
-          ],
-          "start_time": [
-            "Start (UTC)",
-            "Start",
-            "Start Time"
-          ],
-          "end_time": [
-            "End (UTC)",
-            "End",
-            "End Time"
-          ],
-          "program_title": [
-            "Program Title",
-            "Program",
-            "Program Name"
-          ],
-          "program_type": [
-            "Type of program",
-            "Type",
-            "Program Type"
-          ],
-          "event": [
-            "Event",
-            "Event Name"
-          ],
-          "competition": [
-            "Competition",
-            "Competition Name"
-          ],
-          "match_day": [
-            "Matchday",
-            "Match Day"
-          ],
-          "phase_fixture": [
-            "Phase / Fixture / Episode Desc.",
-            "Fixture",
-            "Phase/Fixture"
-          ],
-          "home_team": [
-            "Home Team",
-            "Home"
-          ],
-          "away_team": [
-            "Away Team",
-            "Away"
-          ],
-          "pay_tv": [
-            "Pay/Free TV",
-            "Pay/Free",
-            "Pay TV"
-          ],
-          "client": [
-            "Client",
-            "CLIENT",
-            "Client Type"
-          ],
-          "aud_estimates": [
-            "Aud. Estimates ['000s]",
-            "Audience",
-            "Audience Estimates"
-          ],
-          "aud_metered": [
-            "Aud Metered (000s) 3+",
-            "Audience Metered",
-            "Aud. Metered (000s) 3+"
-          ],
-          "combined": [
-            "Combined",
-            "Channel Combined",
-            "Combined ID"
-          ]
-        },
-        "fixture": {
-          "home_team": [
-            "Home Team",
-            "Home"
-          ],
-          "away_team": [
-            "Away Team",
-            "Away"
-          ],
-          "date": [
-            "Date"
-          ],
-          "start_time": [
-            "Start Time",
-            "Start"
-          ],
-          "event": [
-            "Event",
-            "Competition"
-          ],
-          "match_day": [
-            "Matchday"
-          ]
-        },
-        "macro": {
-          "projects": "Projects",
-          "orig_market": "Orig Market",
-          "orig_channel": "Orig Channel",
-          "dup_market": "Dup Market",
-          "dup_channel": "Dup Channel"
-        },
-        "rosco": {
-          "channel_country": "ChannelCountry",
-          "channel_name": "ChannelName"
-        }
-      },
-      "qc_rules": {
-        "program_category": {
-          "live_types": [
-            "live",
-            "repeat",
-            "delayed"
-          ],
-          "relaxed_types": [
-            "highlights",
-            "magazine",
-            "support",
-            "magazine and support",
-            "magazine/support",
-            "magazine & support"
-          ],
-          "highlight_keywords": [
-            "highlight",
-            "hits",
-            "recap",
-            "summary",
-            "overview"
-          ],
-          "magazine_keywords": [
-            "pre",
-            "post",
-            "studio",
-            "interview",
-            "analysis"
-          ],
-          "support_keywords": [
-            "support",
-            "build up"
-          ]
-        },
-        "overlap_check": {
-          "daybreak_gap_tolerance_min": 2,
-          "ignore_platforms": []
-        },
-        "client_check": {
-          "lstv_platform": "LSTV",
-          "ott_platform": "OTT",
-          "ott_keywords": [
-            "ott",
-            "online",
-            "digital",
-            "streaming",
-            "app",
-            "player"
-          ],
-          "ott_channels_to_ignore": [
-            "dazn"
-          ]
-        }
-      }
+
+  "file_rules": {
+    "output_prefix": "QC_Result_",
+    "output_sheet_name": "QC Results",
+    "summary_sheet_name": "Summary",
+    "fixture_sheet_keyword": "fixture",
+    "macro_sheet_name": "Data Core",
+    "macro_header_row": 1,
+    "rosco_ignore_sheet": "general"
+  },
+
+  "project_rules": {
+    "project_name": "Football QC Project",
+    "league_keyword": "F24 Spain",
+    "domestic_market": "Spain",
+    "domestic_league_keywords": [
+      "F24 Spain",
+      "LaLiga",
+      "Liga",
+      "Primera",
+      "Segunda",
+      "Liga Española"
+    ]
+  },
+
+  "column_mappings": {
+    "bsr": {
+      "tv_channel": ["TV Channel", "TV-Channel", "Channel", "TV Channel "],
+      "channel_id": ["Channel ID", "ChannelID", "Channel Id"],
+      "market": ["Market"],
+      "market_id": ["Market ID"],
+      "type_of_program": ["Type of Program", "Type of programme", "Type of program"],
+      "match_day": ["Matchday", "Match Day", "Matchday "],
+      "home_team": ["Home Team", "HomeTeam", "Home"],
+      "away_team": ["Away Team", "AwayTeam", "Away"],
+      "date": ["Date (UTC/GMT)", "Date"],
+      "start_time": ["Start (UTC)", "Start(UTC)"],
+      "end_time": ["End (UTC)", "End(UTC)"],
+      "duration": ["Duration"],
+      "competition": ["Competition"],
+      "event": ["Event"],
+      "program_desc": ["Program Description", "Program", "Description", "Title"],
+      "pay_tv": ["Pay/Free TV"],
+      "source": ["Source", "AudienceSource", "Audience Source", "Audience_Source"],
+      "aud_estimates": ["Aud. Estimates ['000s]", "Audience Estimates", "Aud Estimates"],
+      "aud_metered": ["Aud Metered (000s) 3+", "Audience Metered", "Aud. Metered (000s) 3+"],
+      "combined": ["Combined", "Channel Combined", "Combined ID"]
+    },
+
+    "fixture": {
+      "home_team": ["Home Team", "Home"],
+      "away_team": ["Away Team", "Away"],
+      "date": ["Date"],
+      "start_time": ["Start Time", "Start"],
+      "event": ["Event", "Competition"],
+      "match_day": ["Matchday"]
+    },
+
+    "macro": {
+      "projects": "Projects",
+      "orig_market": "Orig Market",
+      "orig_channel": "Orig Channel",
+      "dup_market": "Dup Market",
+      "dup_channel": "Dup Channel"
+    },
+
+    "rosco": {
+      "channel_country": "ChannelCountry",
+      "channel_name": "ChannelName"
+    }
+  },
+
+  "qc_rules": {
+    "program_category": {
+      "live_types": ["live", "repeat", "delayed"],
+      "relapse_types": ["highlights", "magazine", "support", "magazine and support", "magazine/support", "magazine & support"],
+      "highlight_keywords": ["highlight", "hits", "recap", "summary", "overview"],
+      "magazine_keywords": ["pre", "post", "studio", "interview", "analysis"],
+      "live_tolerance_min": 30,
+      "support_duration_min": 0.0333,
+      "support_duration_max": 60,
+      "bsa_max_duration": 180
+    },
+
+    "client_check": {
+      "keywords": ["client", "lstv", "ott"]
+    },
+
+    "overlap_check": {
+      "daybreak_midnight_tolerance_min": 30,
+      "ignore_platforms": ["ott", "internet", "www"]
     }
   }
 }
