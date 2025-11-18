@@ -167,11 +167,6 @@ if run_button:
                 bsr_path = save_uploaded_file(bsr_file, UPLOAD_FOLDER)
                 logging.info(f"Uploaded → Rosco: {rosco_path}, BSR: {bsr_path}")
 
-                data_path = None
-                if data_file:
-                    data_path = save_uploaded_file(data_file, UPLOAD_FOLDER)
-                    logging.info(f"Uploaded Data: {data_path}")
-
                 macro_path = None
                 if macro_file:
                     macro_path = save_uploaded_file(macro_file, UPLOAD_FOLDER)
