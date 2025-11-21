@@ -1009,19 +1009,71 @@ def overlap_duplicate_daybreak_check(df, bsr_cols, rules, duplicated_channels=No
                     overlap_ok.at[idx_orig] = True
                     overlap_remark.at[idx_orig] = "OK"
 
-                # daybreak
-                if gap_min > tol:
-                    daybreak_ok.at[idx_orig] = False
-                    daybreak_remark.at[idx_orig] = f"Large gap from previous program ({gap_min:.1f} min) > tolerance {tol} min"
-                else:
-                    # This is the corrected line:
-                    daybreak_ok.at[idx_orig] = True
-                    daybreak_remark.at[idx_orig] = "OK"
-            else:
-                overlap_ok.at[idx_orig] = True
-                overlap_remark.at[idx_orig] = "OK"
-                daybreak_ok.at[idx_orig] = True
-                daybreak_remark.at[idx_orig] = "OK"
+                # -------------------------
+                # OPTIMIZED GLOBAL DAYBREAK (vectorized via self-merge)
+                # Daybreak_OK = False for detected continuations
+                # -------------------------
+                try:
+                    def _safe_str_series(col):
+                        return df_in[col].fillna("").astype(str) if col else pd.Series("", index=df_in.index)
+
+                    # Build composite key (Market + Channel + Event + Date)
+                    if col_date:
+                        date_key = pd.to_datetime(df_in[col_date], errors='coerce', utc=True).dt.strftime('%Y-%m-%d').fillna('')
+                    else:
+                        date_key = df_in['_start_dt'].dt.strftime('%Y-%m-%d').fillna('')
+
+                    market_key  = _safe_str_series(col_market)
+                    channel_key = _safe_str_series(col_channel_id) if col_channel_id else _safe_str_series(col_channel)
+                    event_key   = _safe_str_series(col_event) if col_event else pd.Series("", index=df_in.index)
+
+                    df_in["_key_mc"] = market_key + "||" + channel_key + "||" + event_key + "||" + date_key
+
+                    # Flags
+                    df_in["_is_midnight_cross"] = (
+                        df_in['_start_dt'].notna() &
+                        df_in['_end_dt'].notna() &
+                        (df_in['_end_dt'] < df_in['_start_dt'])
+                    )
+
+                    df_in["_is_early_morning"] = (
+                        df_in['_start_dt'].notna() &
+                        (df_in['_start_dt'].dt.hour >= 0) &
+                        (df_in['_start_dt'].dt.hour < 3)
+                    )
+
+                    # Extract midnight cross rows
+                    mid_df = df_in.loc[df_in["_is_midnight_cross"], ["_key_mc", "_end_dt"]].reset_index() \
+                                .rename(columns={"index": "idx_mid", "_end_dt": "_end_dt_mid"})
+
+                    # Extract early morning rows
+                    early_df = df_in.loc[df_in["_is_early_morning"], ["_key_mc", "_start_dt"]].reset_index() \
+                                .rename(columns={"index": "idx_early", "_start_dt": "_start_dt_early"})
+
+                    if not mid_df.empty and not early_df.empty:
+                        # Merge on key → find possible continuations
+                        merged = mid_df.merge(early_df, on="_key_mc", how="inner")
+
+                        if not merged.empty:
+                            # True continuation if early-start > midnight-end
+                            valid_pairs = merged[
+                                merged["_start_dt_early"] > merged["_end_dt_mid"]
+                            ]
+
+                            if not valid_pairs.empty:
+                                early_idxs = valid_pairs["idx_early"].unique()
+                                mid_idxs   = valid_pairs["idx_mid"].unique()
+
+                                # ⚠ FLAGGING → CONTINUATION = BAD = False
+                                daybreak_ok.loc[early_idxs] = False
+                                daybreak_remark.loc[early_idxs] = "Valid midnight continuation (Global)"
+
+                                daybreak_ok.loc[mid_idxs] = False
+                                daybreak_remark.loc[mid_idxs] = "Midnight crossing – continuation found"
+
+                except Exception:
+                    logging.exception("Optimized global daybreak detection failed")
+                    daybreak_remark = daybreak_remark.where(~daybreak_remark.eq("OK"), "Daybreak detection error")
 
             prev_end = end
 
