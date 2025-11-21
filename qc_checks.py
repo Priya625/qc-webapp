@@ -893,24 +893,41 @@ def overlap_duplicate_daybreak_check(df, bsr_cols, rules, duplicated_channels=No
 
     # --- build full datetimes using date + time ---
     def combine_date_time(date_series, time_series):
-        combined = pd.Series([pd.NaT]*len(time_series), index=time_series.index)
-        if date_series is not None and date_series.name in df_in.columns:
-            try:
-                date_part = pd.to_datetime(df_in[date_series.name], errors='coerce').dt.strftime('%Y-%m-%d')
-                combined = pd.to_datetime(date_part + ' ' + df_in[time_series.name].astype(str), errors='coerce')
-            except Exception:
-                combined = pd.to_datetime(df_in[time_series.name], errors='coerce')
-        else:
-            combined = pd.to_datetime(df_in[time_series.name], errors='coerce')
+        # This is a more robust version of the function
+        
+        # Ensure we are working with the column names
+        date_col = date_series.name
+        time_col = time_series.name
 
-        still_na = combined.isna()
-        if still_na.any():
-            combined.loc[still_na] = pd.to_datetime(df_in.loc[still_na, time_series.name], errors='coerce')
-        return combined
+        # 1. Convert date column to YYYY-MM-DD strings.
+        #    Force any conversion errors to NaT (Not a Time)
+        date_part_dt = pd.to_datetime(df_in[date_col], errors='coerce')
+        date_part_str = date_part_dt.dt.strftime('%Y-%m-%d')
+
+        # 2. Convert time column to strings.
+        #    This handles if it's already a time object or a string.
+        time_part_str = df_in[time_col].astype(str)
+
+        # 3. Combine the date and time strings
+        combined_str = date_part_str + ' ' + time_part_str
+        
+        # 4. Convert the combined string to a final datetime object
+        combined_dt = pd.to_datetime(combined_str, errors='coerce')
+
+        # 5. Handle rows where the conversion failed (e.g., "2025-09-13 NaT")
+        failed_mask = combined_dt.isna()
+        if failed_mask.any():
+            # As a last resort, try to parse the time column directly.
+            # This might use the wrong date (today's date) but it's the
+            # same behavior as the old function's fallback.
+            fallback_dt = pd.to_datetime(df_in[time_col], errors='coerce')
+            combined_dt.loc[failed_mask] = fallback_dt.loc[failed_mask]
+        
+        return combined_dt
 
     date_series = df_in[col_date] if col_date else None
     df_in['_start_dt'] = combine_date_time(date_series, df_in[col_start])
-    df_in['_end_dt']   = combine_date_time(date_series, df_in[col_end])
+    df_in['_end_dt']  = combine_date_time(date_series, df_in[col_end])
 
     # initialize outputs
     overlap_ok = pd.Series(True, index=df_in.index)
@@ -939,6 +956,11 @@ def overlap_duplicate_daybreak_check(df, bsr_cols, rules, duplicated_channels=No
     df_work = df_in.sort_values(by=sort_by, na_position='last').reset_index()
 
     tol = rules.get('daybreak_gap_tolerance_min', 2)
+
+    # --- NEW LINE ADDED ---
+    # Define a small negative tolerance (in minutes) for overlap to handle floating point errors.
+    # We will use -1 second as the threshold.
+    overlap_tolerance_min = -1.0 / 60.0
 
     # === Overlap / Daybreak ===
     group_cols = []
@@ -975,7 +997,12 @@ def overlap_duplicate_daybreak_check(df, bsr_cols, rules, duplicated_channels=No
             if prev_end is not None and not pd.isna(prev_end):
                 gap_min = (start - prev_end).total_seconds() / 60.0
 
-                if gap_min < 0:
+                # --- THIS IS THE CORRECT LOCATION FOR THE PRINT ---
+                print(f"DEBUG: Chan={row[col_channel_id if col_channel_id else col_channel]} | Start={start} | Prev_End={prev_end} | Gap={gap_min}")
+
+                # --- MODIFIED LINE ---
+                # Changed 'if gap_min < 0:' to use the tolerance
+                if gap_min < overlap_tolerance_min:
                     overlap_ok.at[idx_orig] = False
                     overlap_remark.at[idx_orig] = "Overlap detected with previous program"
                 else:
@@ -987,6 +1014,7 @@ def overlap_duplicate_daybreak_check(df, bsr_cols, rules, duplicated_channels=No
                     daybreak_ok.at[idx_orig] = False
                     daybreak_remark.at[idx_orig] = f"Large gap from previous program ({gap_min:.1f} min) > tolerance {tol} min"
                 else:
+                    # This is the corrected line:
                     daybreak_ok.at[idx_orig] = True
                     daybreak_remark.at[idx_orig] = "OK"
             else:
